@@ -1,0 +1,6 @@
+{
+  "name": "Aether Ledger (エーテル帳簿)",
+  "description": "A high-security daily expense tracker with local encryption and a cyberpunk technomancy aesthetic.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
