@@ -56,11 +56,26 @@ export interface UserSettings {
   categoryIcons: Record<string, string>;
 }
 
+export interface PlacedFurniture {
+  id: string; // unique ID for placed instance
+  itemId: string; // ID of the furniture metadata
+  x: number; // grid x coordinate
+  y: number; // grid y coordinate
+  rotation: number; // 0, 90, 180, 270
+}
+
 export interface AppState {
   expenses: Expense[];
   budgets: Budget[];
   recurring: RecurringTransaction[];
   settings: UserSettings;
+  userXP?: number;
+  userLevel?: number;
+  aetherCreds?: number;
+  purchasedFurniture?: string[];
+  purchasedHouses?: string[];
+  currentHouseId?: string;
+  placedFurniture?: PlacedFurniture[];
 }
 
 export interface EncryptionResult {

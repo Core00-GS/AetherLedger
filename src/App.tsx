@@ -74,9 +74,10 @@ import {
   Area
 } from 'recharts';
 
-import { Category, Expense, TransactionType, RecurringFrequency, RecurringTransaction, Budget, UserSettings, AppState } from './types';
+import { Category, Expense, TransactionType, RecurringFrequency, RecurringTransaction, Budget, UserSettings, AppState, PlacedFurniture } from './types';
 import { encryptData, decryptData, hashPassword } from './lib/crypto';
 import { cn, formatCurrency } from './lib/utils';
+import SanctuaryView from './components/SanctuaryView';
 
 const DEFAULT_CATEGORY_COLORS: Record<Category, string> = {
   [Category.FOOD]: '#FF6B6B',
@@ -133,8 +134,17 @@ export default function App() {
     categoryIcons: DEFAULT_CATEGORY_ICONS
   });
   
-  const [view, setView] = useState<'dashboard' | 'transactions' | 'stats' | 'settings'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'transactions' | 'stats' | 'settings' | 'sanctuary'>('dashboard');
   const [error, setError] = useState('');
+
+  // Gamification & Sanctuary states
+  const [userXP, setUserXP] = useState<number>(0);
+  const [userLevel, setUserLevel] = useState<number>(1);
+  const [aetherCreds, setAetherCreds] = useState<number>(120);
+  const [purchasedFurniture, setPurchasedFurniture] = useState<string[]>([]);
+  const [purchasedHouses, setPurchasedHouses] = useState<string[]>(['capsule']);
+  const [currentHouseId, setCurrentHouseId] = useState<string>('capsule');
+  const [placedFurniture, setPlacedFurniture] = useState<PlacedFurniture[]>([]);
 
   // Re-auth logic
   const [isReauthOpen, setIsReauthOpen] = useState(false);
@@ -173,7 +183,14 @@ export default function App() {
       expenses?: Expense[], 
       budgets?: Budget[], 
       recurring?: RecurringTransaction[], 
-      settings?: UserSettings 
+      settings?: UserSettings,
+      userXP?: number,
+      userLevel?: number,
+      aetherCreds?: number,
+      purchasedFurniture?: string[],
+      purchasedHouses?: string[],
+      currentHouseId?: string,
+      placedFurniture?: PlacedFurniture[]
     }, 
     pwd?: string
   ) => {
@@ -185,6 +202,13 @@ export default function App() {
       budgets: data.budgets ?? budgets,
       recurring: data.recurring ?? recurring,
       settings: data.settings ?? settings,
+      userXP: data.userXP ?? (data.userXP === 0 ? 0 : (userXP ?? 0)),
+      userLevel: data.userLevel ?? (userLevel ?? 1),
+      aetherCreds: data.aetherCreds ?? (aetherCreds ?? 120),
+      purchasedFurniture: data.purchasedFurniture ?? (purchasedFurniture ?? []),
+      purchasedHouses: data.purchasedHouses ?? (purchasedHouses ?? ['capsule']),
+      currentHouseId: data.currentHouseId ?? (currentHouseId ?? 'capsule'),
+      placedFurniture: data.placedFurniture ?? (placedFurniture ?? []),
     };
 
     localStorage.setItem(STORAGE_KEYS.CIPHER_DATA, JSON.stringify(encryptData(fullState, activePwd)));
@@ -248,10 +272,36 @@ export default function App() {
         setExpenses(finalExpenses);
         setBudgets(decoded.budgets || []);
         setRecurring(updatedRecurring);
-        setSettings(decoded.settings || { categoryColors: DEFAULT_CATEGORY_COLORS });
+        setSettings(decoded.settings || { categoryColors: DEFAULT_CATEGORY_COLORS, categoryIcons: DEFAULT_CATEGORY_ICONS });
+        
+        const loadedXP = decoded.userXP || 0;
+        const loadedLevel = decoded.userLevel || 1;
+        const loadedCreds = decoded.aetherCreds !== undefined ? decoded.aetherCreds : 120;
+        const loadedFurniture = decoded.purchasedFurniture || [];
+        const loadedHouses = decoded.purchasedHouses || ['capsule'];
+        const loadedHouseId = decoded.currentHouseId || 'capsule';
+        const loadedPlaced = decoded.placedFurniture || [];
+
+        setUserXP(loadedXP);
+        setUserLevel(loadedLevel);
+        setAetherCreds(loadedCreds);
+        setPurchasedFurniture(loadedFurniture);
+        setPurchasedHouses(loadedHouses);
+        setCurrentHouseId(loadedHouseId);
+        setPlacedFurniture(loadedPlaced);
 
         if (newEntries.length > 0) {
-          saveToStorage({ expenses: finalExpenses, recurring: updatedRecurring }, pwd);
+          saveToStorage({ 
+            expenses: finalExpenses, 
+            recurring: updatedRecurring,
+            userXP: loadedXP,
+            userLevel: loadedLevel,
+            aetherCreds: loadedCreds,
+            purchasedFurniture: loadedFurniture,
+            purchasedHouses: loadedHouses,
+            currentHouseId: loadedHouseId,
+            placedFurniture: loadedPlaced
+          }, pwd);
         }
         return true;
       }
@@ -271,7 +321,19 @@ export default function App() {
     const hash = hashPassword(password, salt);
     localStorage.setItem(STORAGE_KEYS.SALT, salt);
     localStorage.setItem(STORAGE_KEYS.PWD_HASH, hash);
-    saveToStorage({ expenses: [], budgets: [], recurring: [], settings: { categoryColors: DEFAULT_CATEGORY_COLORS } }, password);
+    saveToStorage({ 
+      expenses: [], 
+      budgets: [], 
+      recurring: [], 
+      settings: { categoryColors: DEFAULT_CATEGORY_COLORS, categoryIcons: DEFAULT_CATEGORY_ICONS },
+      userXP: 0,
+      userLevel: 1,
+      aetherCreds: 120,
+      purchasedFurniture: [],
+      purchasedHouses: ['capsule'],
+      currentHouseId: 'capsule',
+      placedFurniture: []
+    }, password);
     setIsUnlocked(true);
     setError('');
   };
@@ -391,12 +453,44 @@ export default function App() {
       createdAt: Date.now(),
     };
 
+    // Calculate XP and currency earned for high frugality awareness
+    const xpBonus = newType === TransactionType.INCOME ? 35 : 25;
+    const credBonus = 10;
+
+    let nextXP = userXP + xpBonus;
+    let nextLevel = userLevel;
+    let nextCreds = aetherCreds + credBonus;
+    let reqXP = nextLevel * 150;
+
+    while (nextXP >= reqXP) {
+      nextXP -= reqXP;
+      nextLevel += 1;
+      reqXP = nextLevel * 150;
+    }
+
     const updated = [expense, ...expenses];
     setExpenses(updated);
-    saveToStorage({ expenses: updated });
+    
+    setUserXP(nextXP);
+    setUserLevel(nextLevel);
+    setAetherCreds(nextCreds);
+
+    saveToStorage({ 
+      expenses: updated,
+      userXP: nextXP,
+      userLevel: nextLevel,
+      aetherCreds: nextCreds
+    });
+
     setIsFormOpen(false);
     setNewAmount('');
     setNewDesc('');
+
+    if (nextLevel > userLevel) {
+      setTimeout(() => {
+        alert(`🎉 恭喜升級！記錄這筆收支後，您升到了等級 ${nextLevel} 宇宙管理官！已解鎖更多家居奢品！`);
+      }, 300);
+    }
   };
 
   const deleteExpense = (id: string) => {
@@ -543,6 +637,7 @@ export default function App() {
               { id: 'dashboard', icon: List, label: '概覽' },
               { id: 'transactions', icon: History, label: '流水' },
               { id: 'stats', icon: PieChart, label: '分析' },
+              { id: 'sanctuary', icon: Home, label: '以太家園' },
               { id: 'settings', icon: SettingsIcon, label: '設置' },
             ].map((item) => (
               <button
@@ -939,6 +1034,48 @@ export default function App() {
                    </div>
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {view === 'sanctuary' && (
+            <motion.div 
+              key="sanctuary"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <SanctuaryView 
+                userXP={userXP} 
+                userLevel={userLevel} 
+                aetherCreds={aetherCreds} 
+                purchasedFurniture={purchasedFurniture} 
+                purchasedHouses={purchasedHouses} 
+                currentHouseId={currentHouseId} 
+                placedFurniture={placedFurniture} 
+                expenses={expenses}
+                budgets={budgets}
+                onAddAetherCreds={(amt) => {
+                  const val = aetherCreds + amt;
+                  setAetherCreds(val);
+                  saveToStorage({ aetherCreds: val });
+                }}
+                onAddXP={(amt) => {
+                  const val = userXP + amt;
+                  setUserXP(val);
+                  saveToStorage({ userXP: val });
+                }}
+                onUpdateSanctuary={(updates) => {
+                  if (updates.userXP !== undefined) setUserXP(updates.userXP);
+                  if (updates.userLevel !== undefined) setUserLevel(updates.userLevel);
+                  if (updates.aetherCreds !== undefined) setAetherCreds(updates.aetherCreds);
+                  if (updates.purchasedFurniture !== undefined) setPurchasedFurniture(updates.purchasedFurniture);
+                  if (updates.purchasedHouses !== undefined) setPurchasedHouses(updates.purchasedHouses);
+                  if (updates.currentHouseId !== undefined) setCurrentHouseId(updates.currentHouseId);
+                  if (updates.placedFurniture !== undefined) setPlacedFurniture(updates.placedFurniture);
+
+                  saveToStorage(updates);
+                }}
+              />
             </motion.div>
           )}
 
