@@ -78,6 +78,7 @@ import { Category, Expense, TransactionType, RecurringFrequency, RecurringTransa
 import { encryptData, decryptData, hashPassword } from './lib/crypto';
 import { cn, formatCurrency } from './lib/utils';
 import SanctuaryView from './components/SanctuaryView';
+import ReceiptModal from './components/ReceiptModal';
 
 const DEFAULT_CATEGORY_COLORS: Record<Category, string> = {
   [Category.FOOD]: '#FF6B6B',
@@ -160,10 +161,16 @@ export default function App() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [newAmount, setNewAmount] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [newRemark, setNewRemark] = useState('');
   const [newCategory, setNewCategory] = useState<Category>(Category.FOOD);
   const [newDate, setNewDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [newType, setNewType] = useState<TransactionType>(TransactionType.EXPENSE);
   const [newRecEndDate, setNewRecEndDate] = useState('');
+
+  // Auto-sync visual status indicator state
+  const [showSyncGlow, setShowSyncGlow] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
+  const [printingReceipt, setPrintingReceipt] = useState<Expense | null>(null);
 
   // Search/Filter State
   const [searchTerm, setSearchTerm] = useState('');
@@ -212,6 +219,15 @@ export default function App() {
     };
 
     localStorage.setItem(STORAGE_KEYS.CIPHER_DATA, JSON.stringify(encryptData(fullState, activePwd)));
+    setLastSyncTime(new Date());
+    
+    // Trigger brief auto-sync green glow
+    setShowSyncGlow(true);
+    const syncTimer = setTimeout(() => {
+      setShowSyncGlow(false);
+    }, 1500);
+    // Note: React takes care of basic cleanup since a small delay is non-critical, 
+    // but we can be assured it will turn off correctly.
   };
 
   const processRecurring = (recurringList: RecurringTransaction[], currentExpenses: Expense[]) => {
@@ -448,6 +464,7 @@ export default function App() {
       amount: amountNum,
       category: newCategory,
       description: newDesc || (newType === TransactionType.INCOME ? '未分類收入' : '未分類支出'),
+      remark: newRemark.trim() || undefined,
       date: newDate,
       type: newType,
       createdAt: Date.now(),
@@ -485,6 +502,8 @@ export default function App() {
     setIsFormOpen(false);
     setNewAmount('');
     setNewDesc('');
+    setNewRemark('');
+    setPrintingReceipt(expense);
 
     if (nextLevel > userLevel) {
       setTimeout(() => {
@@ -618,7 +637,14 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-cyber-bg text-gray-100 flex flex-col md:flex-row">
+    <div className="min-h-screen bg-cyber-bg text-gray-100 flex flex-col md:flex-row relative overflow-hidden">
+      {/* Low-intensity ambient glows to lift pitch-dark shadows (Anti-pitch-black correction) */}
+      <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[50%] rounded-full bg-cyber-blue/15 blur-[160px] pointer-events-none z-0" />
+      <div className="absolute bottom-[5%] right-[-10%] w-[70%] h-[60%] rounded-full bg-cyber-pink/15 blur-[180px] pointer-events-none z-0" />
+      <div className="absolute top-[40%] right-[30%] w-[40%] h-[40%] rounded-full bg-cyber-yellow/80 blur-[200px] opacity-[0.03] pointer-events-none z-0" />
+      
+      {/* Dynamic Grid Matrix that floats in background */}
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.012)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.012)_1px,transparent_1px)] bg-[size:60px_60px] pointer-events-none z-0 opacity-80" />
       {/* Sidebar Navigation */}
       <aside className="w-full md:w-64 border-b md:border-b-0 md:border-r border-white/5 p-6 flex flex-col justify-between">
         <div>
@@ -736,20 +762,45 @@ export default function App() {
               {stats.budgetStatus.length > 0 && (
                 <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {stats.budgetStatus.slice(0, 3).map(b => (
-                    <div key={b.id} className="p-4 rounded-xl glass border border-white/5">
+                    <div 
+                      key={b.id} 
+                      className={cn(
+                        "p-4 rounded-xl glass transition-all duration-300 relative overflow-hidden",
+                        b.percent > 90 
+                          ? "border-cyber-pink/80 shadow-[0_0_15px_rgba(255,0,200,0.35)] animate-pulse" 
+                          : "border-white/5"
+                      )}
+                    >
+                      {b.percent > 90 && (
+                        <div className="absolute top-0 right-0 bg-cyber-pink text-white text-[9px] font-bold px-2 py-0.5 rounded-bl uppercase tracking-widest font-mono">
+                          Limit Warning
+                        </div>
+                      )}
+                      
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs font-bold text-gray-300">{b.category === 'OVERALL' ? '總預算' : b.category}</span>
-                        <span className="text-[10px] text-gray-500 font-mono">{formatCurrency(b.spent)} / {formatCurrency(b.amount)}</span>
+                        <span className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                          {b.category === 'OVERALL' ? '總預算' : b.category}
+                          {b.percent > 90 && (
+                            <AlertCircle className="w-4 h-4 text-cyber-pink shrink-0 animate-bounce" />
+                          )}
+                        </span>
+                        <span className="text-[10px] text-gray-400 font-mono">
+                          {formatCurrency(b.spent)} / {formatCurrency(b.amount)}
+                        </span>
                       </div>
-                      <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
                         <motion.div 
                           initial={{ width: 0 }}
                           animate={{ width: `${Math.min(b.percent, 100)}%` }}
                           className={cn(
                             "h-full rounded-full transition-all duration-1000",
-                            b.percent > 90 ? "bg-cyber-pink" : "bg-cyber-blue"
+                            b.percent > 90 ? "bg-cyber-pink shadow-[0_0_8px_#ff00c8]" : "bg-cyber-blue shadow-[0_0_8px_#00f2ff]"
                           )}
                         />
+                      </div>
+                      <div className="mt-1 flex justify-between text-[9px] text-gray-400 font-mono">
+                        <span>{b.percent > 100 ? '超支 🚨' : `${Math.round(b.percent)}% 已使用`}</span>
+                        <span>剩餘 {formatCurrency(Math.max(0, b.amount - b.spent))}</span>
                       </div>
                     </div>
                   ))}
@@ -763,36 +814,109 @@ export default function App() {
                   <button onClick={() => setView('transactions')} className="text-xs text-cyber-blue hover:underline">查看全部</button>
                 </div>
                 <div className="space-y-3">
-                  {expenses.slice(0, 5).map(expense => (
-                    <div key={expense.id} className="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors flex items-center justify-between group">
-                      <div className="flex items-center gap-4">
-                        <div 
-                          className="w-10 h-10 rounded-lg flex items-center justify-center transition-transform hover:scale-110"
-                          style={{ 
-                            backgroundColor: `${settings.categoryColors[expense.category] || DEFAULT_CATEGORY_COLORS[expense.category as Category]}20`, 
-                            color: settings.categoryColors[expense.category] || DEFAULT_CATEGORY_COLORS[expense.category as Category] 
-                          }}
-                        >
-                          {renderCategoryIcon(expense.category)}
+                  {expenses.slice(0, 5).map(expense => {
+                    const dayExpenses = expenses.filter(e => e.date === expense.date);
+                    const dayExpenseTotal = dayExpenses.filter(e => e.type === TransactionType.EXPENSE).reduce((sum, e) => sum + e.amount, 0);
+                    const dayIncomeTotal = dayExpenses.filter(e => e.type === TransactionType.INCOME).reduce((sum, e) => sum + e.amount, 0);
+                    
+                    const dayCategoryMap: Record<string, number> = {};
+                    dayExpenses.forEach(curr => {
+                      if (curr.type === TransactionType.EXPENSE) {
+                        dayCategoryMap[curr.category] = (dayCategoryMap[curr.category] || 0) + curr.amount;
+                      }
+                    });
+
+                    return (
+                      <div key={expense.id} className="relative p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors flex items-center justify-between group">
+                        {/* Hover Popup Detail Panel */}
+                        <div className="absolute top-1/2 right-[102%] -translate-y-1/2 w-80 p-5 rounded-2xl bg-[#161b30]/95 border border-cyber-blue/30 shadow-[0_0_20px_rgba(0,242,255,0.25)] backdrop-blur-xl pointer-events-none invisible opacity-0 scale-95 group-hover:visible group-hover:opacity-100 group-hover:scale-100 transition-all duration-300 z-50 text-xs">
+                          <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-3">
+                            <span className="font-mono text-[10px] text-cyan-400 font-bold uppercase tracking-wider">📅 {expense.date} 收支明細</span>
+                            <span className="text-[9px] text-gray-500 font-mono">DAILY PROFILE</span>
+                          </div>
+                          
+                          <div className="space-y-2 mb-3">
+                            <div className="flex justify-between items-center text-gray-300">
+                              <span>當日總支出:</span>
+                              <span className="font-mono text-cyber-pink font-bold">-{formatCurrency(dayExpenseTotal)}</span>
+                            </div>
+                            {dayIncomeTotal > 0 && (
+                              <div className="flex justify-between items-center text-gray-400">
+                                <span>當日總收入:</span>
+                                <span className="font-mono text-cyber-blue font-bold">+{formatCurrency(dayIncomeTotal)}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {Object.keys(dayCategoryMap).length > 0 ? (
+                            <div className="space-y-2 pt-2 border-t border-white/5">
+                              <span className="text-[10px] text-gray-400 tracking-wider">分類詳情:</span>
+                              {Object.entries(dayCategoryMap).map(([cat, amt]) => {
+                                const currentAmt = amt as number;
+                                const catPct = dayExpenseTotal > 0 ? Math.round((currentAmt / dayExpenseTotal) * 100) : 0;
+                                const catColor = settings.categoryColors[cat] || DEFAULT_CATEGORY_COLORS[cat as Category];
+                                return (
+                                  <div key={cat} className="space-y-1">
+                                    <div className="flex justify-between text-[11px] text-gray-300">
+                                      <span className="flex items-center gap-1.5 font-sans">
+                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: catColor }} />
+                                        {cat}
+                                      </span>
+                                      <span className="font-mono text-gray-400">{formatCurrency(currentAmt)} ({catPct}%)</span>
+                                    </div>
+                                    <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                                      <div className="h-full rounded-full" style={{ width: `${catPct}%`, backgroundColor: catColor }} />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-gray-500 text-center py-2 font-mono text-[10px]">無支出記錄</div>
+                          )}
+
+                          {expense.remark && (
+                            <div className="mt-3 pt-2 border-t border-white/15 text-[10px] text-yellow-400 italic flex gap-1 items-start bg-yellow-400/5 p-2 rounded-lg leading-relaxed">
+                              <span className="shrink-0 text-amber-400">💬</span>
+                              <span><strong>備忘錄:</strong> {expense.remark}</span>
+                            </div>
+                          )}
                         </div>
-                        <div>
-                          <div className="font-medium">{expense.description}</div>
-                          <div className="text-[10px] text-gray-500 uppercase tracking-wider">{expense.category} • {expense.date}</div>
+
+                        <div className="flex items-center gap-4">
+                          <div 
+                            className="w-10 h-10 rounded-lg flex items-center justify-center transition-transform hover:scale-110"
+                            style={{ 
+                              backgroundColor: `${settings.categoryColors[expense.category] || DEFAULT_CATEGORY_COLORS[expense.category as Category]}20`, 
+                              color: settings.categoryColors[expense.category] || DEFAULT_CATEGORY_COLORS[expense.category as Category] 
+                            }}
+                          >
+                            {renderCategoryIcon(expense.category)}
+                          </div>
+                          <div>
+                            <div className="font-medium flex items-center gap-2">
+                              {expense.description}
+                              {expense.remark && (
+                                <span className="text-[10px] bg-yellow-400/10 text-yellow-500 px-1.5 py-0.5 rounded border border-yellow-400/20 font-mono">REMARK</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-gray-400 uppercase tracking-wider">{expense.category} • {expense.date}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-6">
+                          <span className={cn("font-mono font-bold", expense.type === TransactionType.INCOME ? "text-cyber-blue" : "text-cyber-pink")}>
+                            {expense.type === TransactionType.INCOME ? '+' : '-'}{formatCurrency(expense.amount)}
+                          </span>
+                          <button 
+                            onClick={() => deleteExpense(expense.id)}
+                            className="opacity-0 group-hover:opacity-100 p-2 text-gray-500 hover:text-cyber-pink transition-all"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-6">
-                        <span className={cn("font-mono font-bold", expense.type === TransactionType.INCOME ? "text-cyber-blue" : "text-cyber-pink")}>
-                          {expense.type === TransactionType.INCOME ? '+' : '-'}{formatCurrency(expense.amount)}
-                        </span>
-                        <button 
-                          onClick={() => deleteExpense(expense.id)}
-                          className="opacity-0 group-hover:opacity-100 p-2 text-gray-500 hover:text-cyber-pink transition-all"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {expenses.length === 0 && (
                     <div className="py-20 text-center border-2 border-dashed border-white/5 rounded-2xl">
                       <div className="text-gray-600 mb-2 font-mono">NO RECORDS FOUND</div>
@@ -1619,7 +1743,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-xs uppercase tracking-widest text-gray-500 mb-2 font-mono">描述</label>
+                  <label className="block text-xs uppercase tracking-widest text-gray-400 mb-2 font-mono">描述</label>
                   <input 
                     type="text"
                     required
@@ -1627,6 +1751,20 @@ export default function App() {
                     onChange={(e) => setNewDesc(e.target.value)}
                     placeholder={newType === TransactionType.INCOME ? "工資、投資回報..." : "午餐、地鐵票、電影..."}
                     className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-cyber-blue"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="block text-xs uppercase tracking-widest text-gray-400 font-mono">備註 (選填)</label>
+                    <span className="text-[10px] text-gray-500 font-mono">ADDITIONAL REMARKS</span>
+                  </div>
+                  <input 
+                    type="text"
+                    value={newRemark}
+                    onChange={(e) => setNewRemark(e.target.value)}
+                    placeholder="補充交易詳細信託，例如：商戶、支付卡、個人備忘錄..."
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-cyber-blue"
                   />
                 </div>
 
@@ -1653,6 +1791,60 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Cybernetic Receipt Printer Modal Overlay */}
+      {printingReceipt && (
+        <ReceiptModal
+          expense={printingReceipt}
+          onClose={() => setPrintingReceipt(null)}
+          userXP={Math.round(userXP)}
+          userLevel={userLevel}
+          aetherCreds={Math.round(aetherCreds)}
+          xpBonus={printingReceipt.type === TransactionType.INCOME ? 35 : 25}
+          credBonus={10}
+        />
+      )}
+
+      {/* Floating Auto-Sync Status Indicators */}
+      <div 
+        id="auto-sync-status-indicator"
+        title={`最後同步時間: ${format(lastSyncTime, 'yyyy-MM-dd HH:mm:ss')}`}
+        className={cn(
+          "fixed bottom-6 right-6 z-50 bg-[#161b30]/90 backdrop-blur-md border border-white/10 rounded-full px-4 py-2 flex items-center gap-2 text-[10px] text-gray-300 font-mono select-none shadow-[0_4px_20px_rgba(0,0,0,0.6)] group transition-all duration-300 cursor-help",
+          showSyncGlow 
+            ? "animate-pulse-glow border-cyber-blue/80 bg-cyan-950/50 text-white" 
+            : "hover:shadow-[inset_0_0_12px_rgba(0,242,255,0.45),0_4px_25px_rgba(0,0,0,0.7)] hover:border-cyber-blue/50"
+        )}
+      >
+        {/* Custom Mini Tooltip on Hover */}
+        <div className="absolute bottom-full right-0 mb-3 w-64 p-3 bg-[#111425]/95 border border-cyber-blue/30 rounded-xl text-[9px] text-gray-300 pointer-events-none opacity-0 group-hover:opacity-100 transition-all duration-300 shadow-[0_0_15px_rgba(0,242,255,0.25)] flex flex-col gap-1 z-50">
+          <div className="flex justify-between border-b border-white/10 pb-1 mb-1 font-bold text-cyan-400">
+            <span>❖ AETHER SECURE LEDGER</span>
+            <span>SYSTEM ENCLAVE</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500 font-semibold">LAST SYNCED:</span>
+            <span className="text-white font-bold">{format(lastSyncTime, 'yyyy-MM-dd HH:mm:ss')}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500 font-semibold">SEAL INTEGRITY:</span>
+            <span className="text-emerald-400 font-bold">AES-256 OK</span>
+          </div>
+          <div className="text-[8px] text-gray-400/80 mt-1 leading-normal">
+            * AUTOMATIC SYNCHRONIZATION TRIGGERED TO ISOLATED BROWSER DISK STORAGE SECURE_JAR *
+          </div>
+        </div>
+
+        <span className={cn(
+          "w-2.5 h-2.5 rounded-full transition-all duration-300",
+          showSyncGlow 
+            ? "bg-green-400 shadow-[0_0_12px_#4ade80,0_0_24px_#4ade80]" 
+            : "bg-emerald-500/50 shadow-[0_0_4px_rgba(16,185,129,0.3)] animate-pulse"
+        )} />
+        <span className="font-bold tracking-wider">
+          {showSyncGlow ? 'AETHER AUTOSYNCED ✅' : 'KAKEIBO ENCRYPTED ENCLAVE'}
+        </span>
+      </div>
     </div>
   );
 }

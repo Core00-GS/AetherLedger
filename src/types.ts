@@ -27,6 +27,7 @@ export interface Expense {
   amount: number;
   category: Category;
   description: string;
+  remark?: string;
   date: string; // ISO format
   type: TransactionType;
   createdAt: number;
